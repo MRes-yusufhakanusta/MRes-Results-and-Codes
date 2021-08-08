@@ -1,0 +1,132 @@
+print "ClearAll[\"Global`*\"]
+$HistoryLength=1;
+ClearSystemCache[]; 
+//Clear All data used before
+
+dir=\"C:\\Users\\YHU\\Desktop\\50k6.5\";
+files=FileNames[\"*.tif\",dir];
+numberoffiles=Length[files];
+alldata=Table[Import[files[[j]]],{j,1,numberoffiles}];
+numberofpositions=Length[files]/4;
+
+actin=Table[alldata[[2+((i-1)*4)]],{i,1,numberofpositions}] = int imagesactin
+nucleus=Table[alldata[[3+((i-1)*4)]],{i,1,numberofpositions}] = imagesnucleus
+focaladhesion=Table[alldata[[4+((i-1)*4)]],{i,1,numberofpositions}] = imagesfocal
+merged=Table[alldata[[1+((i-1)*4)]],{i,1,numberofpositions}] = imagestotal
+;
+
+transformactin=ImageAdjust[#]&/@imagesactin;
+transformnucleus=ImageAdjust[#]&/@imagesnucleus;
+
+removebackgroundactin=TopHatTransform[#,150]&/@transformactin;
+removebackgroundnucleus=TopHatTransform[#,100]&/@transformnucleus;
+
+tophattransformfocal=TopHatTransform[#,DiskMatrix[10]]&/@imagesfocal;
+Medianfilterred7=MedianFilter[#,7]&/@tophattransformfocal
+removebackground7=Image[ImageData[#[[1]]]-ImageData[#[[2]]]]&/@Transpose[{tophattransformfocal,Medianfilterred7}];
+
+actinadjusted=removebackgroundactin;
+nucleusadjusted=removebackgroundnucleus;
+focaladjusted=removebackground7;
+
+
+binblue=Binarize[Erosion[FillingTransform[Dilation[#,5]],7]]&/@nucleusadjusted;
+binactin=DeleteSmallComponents[MorphologicalBinarize[Erosion[FillingTransform[Dilation[#,1]],1]],Method->\"Mean\"]&/@ actinadjusted;
+
+quantifyfocal7=Binarize[#]&/@removebackground7;
+imageadhesions7=Colorize[MorphologicalComponents[#]]&/@quantifyfocal7;
+composefocal=ImageCompose[#[[1]],RemoveBackground[#[[2]]]]&/@Transpose[{imagesfocal,imageadhesions7}]
+
+border=5;
+Crop[img_,{{dxl_,dxr_},{dyl_,dyu_}}]:=ImageTake[img,{dyl,-dyu},{dxl,-dxr}]
+actincrop=Crop[#,{{border,border},{border,border}}]&/@binactin
+cellcrop=Crop[#,{{border,border},{border,border}}]&/@actinadjusted
+nucleuscrop=Crop[#,{{border,border},{border,border}}]&/@binblue
+focalcrop=Crop[#,{{border,border},{border,border}}]&/@quantifyfocal7;
+
+marker=0.15;
+areacell=20/(0.266^2);
+disTgreenselect=ImageAdjust[DistanceTransform[#]]&/@actincrop;
+markergreenselect=MaxDetect[#,marker]&/@disTgreenselect
+watershedComponentsgreenselect=WatershedComponents[ColorNegate[#[[1]]],#[[2]]]*ImageData[#[[3]]]&/@Transpose[{disTgreenselect,markergreenselect,actincrop}];
+imageselect=Colorize[#]&/@watershedComponentsgreenselect
+
+selectallactin=imageselect;
+selectactinnocolour=Binarize[#]&/@selectallactin;
+selectactinold=SelectComponents[#,\"AdjacentBorderCount\",#==0&]&/@selectactinnocolour;
+selectactin=SelectComponents[#,\"Area\",areacell/(0.266^2)<#&]&/@selectactinold
+selectcell=ImageMultiply[#[[1]],#[[2]]]&/@Transpose[{cellcrop,selectactin}]
+selectnucleus=FillingTransform[ImageMultiply[#[[1]],#[[2]]]]&/@Transpose[{nucleuscrop,selectactin}]
+selectfocal=FillingTransform[ImageMultiply[#[[1]],#[[2]]]]&/@Transpose[{focalcrop,selectactin}]
+
+selectimagenucleus=SelectComponents[#,\"Area\",#>200&]&/@selectnucleus
+disTblue=DistanceTransform[#]&/@selectimagenucleus;
+markerblue=MaxDetect[#,5]&/@disTblue;
+watershedComponentsblue=WatershedComponents[ColorNegate[#[[1]]],#[[2]]]*ImageData[#[[3]]]&/@Transpose[{disTblue,markerblue,selectimagenucleus}];
+imagenucleus=Colorize[#]&/@watershedComponentsblue
+componentsblue=ComponentMeasurements[{#[[1]],#[[2]]},{\"Centroid\",\"SemiAxes\",\"Orientation\",\"Max\"}]&/@Transpose[{watershedComponentsblue,disTblue}];
+componentsbluelongaxis=Flatten[ComponentMeasurements[{#[[1]],#[[2]]},{\"Length\"}]&/@Transpose[{watershedComponentsblue,disTblue}]/.Rule[a_,b_]->b*0.266];
+componentsblueshortaxis=Flatten[ComponentMeasurements[{#[[1]],#[[2]]},{\"Width\"}]&/@Transpose[{watershedComponentsblue,disTblue}]/.Rule[a_,b_]->b*0.266];
+componentsblueelongation=Flatten[ComponentMeasurements[{#[[1]],#[[2]]},{\"Elongation\"}]&/@Transpose[{watershedComponentsblue,disTblue}]/.Rule[a_,b_]->b];
+componentsbluearea=Flatten[ComponentMeasurements[{#[[1]],#[[2]]},{\"Area\"}]&/@Transpose[{watershedComponentsblue,disTblue}]/.Rule[a_,b_]->b*(0.266^2)];
+componentsblueperimeter=Flatten[ComponentMeasurements[{#[[1]],#[[2]]},{\"PolygonalLength\"}]&/@Transpose[{watershedComponentsblue,disTblue}]/.Rule[a_,b_]->b*0.266];
+componentsblueangle=(180/Pi)*Flatten[ComponentMeasurements[{#[[1]],#[[2]]},{\"Orientation\"}]&/@Transpose[{watershedComponentsblue,disTblue}]/.Rule[a_,b_]->b];
+componentsblueangle2=If[#<0,180-Abs[#],#]&/@componentsblueangle;
+fitellipsenucleus=Show[#[[1]],Graphics[{Red,#[[2]][[All,2]]/.{{centroid_,semiAxes_,orientation_,maxR_}:>Rotate[Disk[centroid,{semiAxes[[1]],semiAxes[[2]]}],orientation,centroid]}}]]&/@Transpose[{selectnucleus,componentsblue}]
+outlinenucleus=EdgeDetect[#]&/@selectnucleus
+
+disTgreen=ImageAdjust[DistanceTransform[#]]&/@selectactin
+markergreen=MaxDetect[#,0.3]&/@disTgreen
+watershedComponentsgreen=WatershedComponents[ColorNegate[#[[1]]],#[[2]]]*ImageData[#[[3]]]&/@Transpose[{disTgreen,markergreen,selectactin}];
+image=Colorize[#]&/@watershedComponentsgreen
+componentsgreen=ComponentMeasurements[{#[[1]],#[[2]]},{\"Centroid\",\"SemiAxes\",\"Orientation\",\"Max\"}]&/@Transpose[{watershedComponentsgreen,disTgreen}];
+componentsgreenlongaxis=Flatten[ComponentMeasurements[{#[[1]],#[[2]]},{\"Length\"}]&/@Transpose[{watershedComponentsgreen,disTgreen}]/.Rule[a_,b_]->b*0.266];
+componentsgreenshortaxis=Flatten[ComponentMeasurements[{#[[1]],#[[2]]},{\"Width\"}]&/@Transpose[{watershedComponentsgreen,disTgreen}]/.Rule[a_,b_]->b*0.266];
+componentsgreenelongation=Flatten[ComponentMeasurements[{#[[1]],#[[2]]},{\"Elongation\"}]&/@Transpose[{watershedComponentsgreen,disTgreen}]/.Rule[a_,b_]->b];
+componentsgreenarea=Flatten[ComponentMeasurements[{#[[1]],#[[2]]},{\"Area\"}]&/@Transpose[{watershedComponentsgreen,disTgreen}]/.Rule[a_,b_]->b*(0.266^2)];
+componentsgreenperimeter=Flatten[ComponentMeasurements[{#[[1]],#[[2]]},{\"PolygonalLength\"}]&/@Transpose[{watershedComponentsgreen,disTgreen}]/.Rule[a_,b_]->b*0.266];
+componentsgreenangle=(180/Pi)*Flatten[ComponentMeasurements[{#[[1]],#[[2]]},{\"Orientation\"}]&/@Transpose[{watershedComponentsgreen,disTgreen}]/.Rule[a_,b_]->b];
+componentsgreenangle2=If[#<0,180-Abs[#],#]&/@componentsgreenangle;
+Lengthcell=Flatten[ComponentMeasurements[#,\"CaliperLength\"]&/@watershedComponentsgreen/.Rule[a_,b_]->b*0.266];
+fitellipseactin=Show[#[[1]],Graphics[{Red,#[[2]][[All,2]]/.{{centroid_,semiAxes_,orientation_,maxR_}:>Rotate[Disk[centroid,{semiAxes[[1]],semiAxes[[2]]}],orientation,centroid]}}]]&/@Transpose[{selectactin,componentsgreen}]
+outlinecell=EdgeDetect[#]&/@selectactin
+
+sizefocal=0.15;
+selectfocalareanew=SelectComponents[#, \"Area\",sizefocal/(0.266^2)<#&]&/@selectfocal
+shortaxisfocal=Flatten[ComponentMeasurements[#,\"Width\"]]&/@selectfocalareanew/.Rule[a_,b_]->b*0.266;
+longaxisfocal=Flatten[ComponentMeasurements[#,\"Length\"]]&/@selectfocalareanew/.Rule[a_,b_]->b*0.266;
+centroidfocal=Flatten[ComponentMeasurements[#,\"Centroid\"]]&/@selectfocalareanew/.Rule[a_,b_]->b;
+elongationfocal=Flatten[ComponentMeasurements[#,\"Elongation\"]]&/@selectfocalareanew/.Rule[a_,b_]->b;
+lengthfocal=Flatten[ComponentMeasurements[#,\"CaliperLength\"]]&/@selectfocalareanew/.Rule[a_,b_]->b*0.266;
+perimeterfocal=Flatten[ComponentMeasurements[#,\"PolygonalLength\"]]&/@selectfocalareanew/.Rule[a_,b_]->b*0.266;
+Areafocalafter=Flatten[ComponentMeasurements[#, \"Area\"]]&/@selectfocalareanew/.Rule[a_,b_]->b*(0.266^2);
+Orientationfocal=(180/Pi)*Flatten[ComponentMeasurements[#, \"Orientation\"]]&/@selectfocalareanew/.Rule[a_,b_]->b;
+Orientationfocal2=If[#<0,180-Abs[#],#]&/@Orientationfocal;
+fitellipsefocal=ComponentMeasurements[#,{\"Centroid\",\"SemiAxes\",\"Orientation\",\"Max\"}]&/@selectfocalareanew;
+Show[#[[1]],Graphics[{Blue,#[[2]][[All,2]]/.{{centroid_,semiAxes_,orientation_,maxR_}:>Rotate[Disk[centroid,{semiAxes[[1]],semiAxes[[2]]}],orientation,centroid]}}]]&/@Transpose[{selectfocalareanew,fitellipsefocal}]
+
+SetDirectory[dir];
+Do[Export[StringJoin[\"selectactin_\",ToString[n],\".tif\"],selectactin[[n]]],{n,1,Length[selectactin]}]
+Do[Export[StringJoin[\"selectnucleus_\",ToString[n],\".tif\"],selectnucleus[[n]]],{n,1,Length[selectnucleus]}]
+Do[Export[StringJoin[\"watershedactin_\",ToString[n],\".tif\"],image[[n]]],{n,1,Length[image]}]
+Do[Export[StringJoin[\"selectcell_\",ToString[n],\".tif\"],selectcell[[n]]],{n,1,Length[selectcell]}]
+Do[Export[StringJoin[\"celloutlinenew_\",ToString[n],\".tif\"],outlinecell[[n]]],{n,1,Length[outlinecell]}]
+Do[Export[StringJoin[\"nucleusoutlinenew_\",ToString[n],\".tif\"],outlinenucleus[[n]]],{n,1,Length[outlinenucleus]}]
+
+Export[\"allfocaladhesionsfilter.png\",#,\"png\"]&/@removebackground7;
+Export[\"allfocaladhesions.png\",#,\"png\"]&/@imageadhesions7;
+
+mytableactin={componentsgreenarea,componentsgreenlongaxis,componentsgreenshortaxis,componentsgreenelongation,componentsgreenperimeter,componentsgreenangle2,Lengthcell}//Transpose;
+headers={\"Cell area\",\"Long axis\",\"Short axis\",\"Elongation\",\"Perimeter\",\"Orientation actin\",\"Length Cell\"};
+dataactin=Prepend[mytableactin,headers];
+Export[\"dataactinmultiple.xls\",dataactin];
+
+mytablenucleus={componentsbluearea,componentsbluelongaxis,componentsblueshortaxis,componentsblueelongation,componentsblueperimeter,componentsblueangle2}//Transpose;
+headersnucleus={\"Nucleus area\",\"Long axis\",\"Short axis\",\"Elongation\",\"Perimeter\",\"Orientation nucleus\"};
+datanucleus=Prepend[mytablenucleus,headersnucleus];
+Export[\"datanucleusmultiple.xls\",datanucleus];
+
+mytablefocal={Areafocalafter,longaxisfocal,shortaxisfocal,elongationfocal,Orientationfocal2}//Transpose;
+headersfocal={\"Focal area\",\"Long axis\",\"Short axis\",\"Elongation\",\"Orientation focal\"};
+datafocal=Prepend[mytablefocal,headersfocal];
+Export[\"datafocalmultiple.xls\",datafocal];\n";
