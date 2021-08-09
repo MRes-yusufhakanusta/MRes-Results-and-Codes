@@ -3,8 +3,8 @@ $HistoryLength=1;
 ClearSystemCache[]; 
 //Clear All data used before
 
-dir=\"C:\\Users\\YHU\\Desktop\\50k6.5\";
-files=FileNames[\"*.tif\",dir];
+int direction=\"";
+files=FileNames[\"*.tif\",direction];
 numberoffiles=Length[files];
 alldata=Table[Import[files[[j]]],{j,1,numberoffiles}];
 numberofpositions=Length[files]/4;
